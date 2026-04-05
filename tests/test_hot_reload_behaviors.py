@@ -7,6 +7,7 @@ from itertools import count
 from types import CodeType, SimpleNamespace
 
 from jurigged.live import watch
+from jurigged.codetools import CodeFile, FunctionDefinition
 from jurigged.register import Registry
 
 from .common import TemporaryModule
@@ -254,3 +255,28 @@ def test_complex_nested_and_decorated_updates_keep_debugger_line_alignment():
     finally:
         ctx.watcher.stop()
         ctx.watcher.join()
+
+
+def test_same_file_merge_refreshes_stashed_line_numbers():
+    tmod = TemporaryModule()
+    module_name = f"hot_reload_merge_{next(_counter)}"
+    filename = f"{module_name}.py"
+    module_path = tmod.rel(filename)
+    _write_file(module_path, _snippet_source("line_numbers_main"))
+
+    module = __import__(module_name)
+    codefile = CodeFile(module_path, module_name=module_name)
+    codefile.associate(module)
+
+    _write_file(module_path, _snippet_source("line_numbers_change_preamble"))
+    updated = CodeFile(module_path, module_name=module_name)
+    codefile.merge(updated, order="new")
+
+    stable_fn = next(
+        defn
+        for defn in codefile.root.walk()
+        if isinstance(defn, FunctionDefinition)
+        and defn.name == "keep_line_numbers_stable"
+    )
+    assert module.keep_line_numbers_stable.__code__.co_firstlineno == 5
+    assert stable_fn.stashed.lineno == 5

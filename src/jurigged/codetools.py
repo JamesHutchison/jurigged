@@ -1143,6 +1143,10 @@ class CodeFile:
         if corr.changed:
             self.dirty = True
         self.root.apply_correspondence(corr, order=order, controller=controller)
+        if self.filename == other.filename:
+            # Keep stashed extents in sync for same-file merges so
+            # debugger-facing metadata (e.g. line numbers) doesn't drift.
+            self.root.stash()
         return corr.summary()
 
     def commit(self, check_stale=True):
