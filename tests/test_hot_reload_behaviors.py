@@ -336,62 +336,73 @@ def test_complex_nested_and_decorated_updates_keep_debugger_line_alignment():
 
 
 def test_external_io_hot_reload_handles_ten_distinct_changes_without_drift():
-    ctx = _start_hot_module("io_chain_01")
-    try:
-        def _await_pipeline(expected, timeout=3.0):
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if ctx.module.pipeline(3) == expected:
-                    return
-                time.sleep(0.05)
-            assert ctx.module.pipeline(3) == expected
+    tmod = TemporaryModule()
+    module_name = f"hot_reload_io_chain_{next(_counter)}"
+    filename = f"{module_name}.py"
+    module_path = tmod.rel(filename)
+    _write_file(module_path, _snippet_source("io_chain_01"))
 
-        expected_outputs = [
-            "s1:8",
-            "s1:12",
-            "s1:17",
-            "s4:17",
-            "s4:20",
-            "s4:21",
-            "s4:26",
-            "s8:18",
-            "s8:15",
-            "final:26",
-        ]
-        expected_first_lines = [12, 12, 12, 12, 15, 15, 15, 15, 15, 16]
-        assert ctx.module.pipeline(3) == expected_outputs[0]
+    module = __import__(module_name)
+    codefile = CodeFile(module_path, module_name=module_name)
+    codefile.associate(module)
+
+    def _merge_change(updated_name):
+        _write_file(module_path, _snippet_source(updated_name))
+        updated = CodeFile(module_path, module_name=module_name)
+        codefile.merge(updated, order="new")
+        return next(
+            defn
+            for defn in codefile.root.walk()
+            if isinstance(defn, FunctionDefinition)
+            and defn.name == "raw_pipeline"
+        )
+
+    expected_outputs = [
+        "s1:8",
+        "s1:12",
+        "s1:17",
+        "s4:17",
+        "s4:20",
+        "s4:21",
+        "s4:26",
+        "s8:18",
+        "s8:15",
+        "final:26",
+    ]
+    expected_first_lines = [12, 12, 12, 12, 15, 15, 15, 15, 15, 16]
+
+    assert module.pipeline(3) == expected_outputs[0]
+    _assert_debugger_view_matches_runtime(
+        module.raw_pipeline,
+        expected_firstlineno=expected_first_lines[0],
+    )
+
+    for change_index in range(2, 11):
+        raw_pipeline_defn = _merge_change(f"io_chain_{change_index:02d}")
+        assert module.pipeline(3) == expected_outputs[change_index - 1]
         _assert_debugger_view_matches_runtime(
-            ctx.module.raw_pipeline,
-            expected_firstlineno=expected_first_lines[0],
+            module.raw_pipeline,
+            expected_firstlineno=expected_first_lines[change_index - 1],
+        )
+        assert (
+            raw_pipeline_defn.stashed.lineno
+            == expected_first_lines[change_index - 1]
         )
 
-        for change_index in range(2, 11):
-            _apply_change(ctx, f"io_chain_{change_index:02d}")
-            _await_pipeline(expected_outputs[change_index - 1])
-            _assert_debugger_view_matches_runtime(
-                ctx.module.raw_pipeline,
-                expected_firstlineno=expected_first_lines[
-                    change_index - 1
-                ],
-            )
+    # Re-check at the end to ensure the module still reflects latest logic.
+    assert module.pipeline(3) == "final:26"
+    assert module.TAG == "final"
+    assert module.DECORATOR_BONUS == 7
 
-        # Re-check at the end to ensure the module still reflects latest logic.
-        assert ctx.module.pipeline(3) == "final:26"
-        assert ctx.module.TAG == "final"
-        assert ctx.module.DECORATOR_BONUS == 7
-
-        _assert_debugger_view_matches_runtime(
-            ctx.module.raw_pipeline, expected_firstlineno=16
-        )
-        _assert_line_markers_present(
-            ctx.module.raw_pipeline,
-            [
-                (16, "def raw_pipeline(value):"),
-                (19, "def inner(multiplier):"),
-                (20, "def leaf(offset):"),
-                (21, "return seed * multiplier + offset"),
-            ],
-        )
-    finally:
-        ctx.watcher.stop()
-        ctx.watcher.join()
+    _assert_debugger_view_matches_runtime(
+        module.raw_pipeline, expected_firstlineno=16
+    )
+    _assert_line_markers_present(
+        module.raw_pipeline,
+        [
+            (16, "def raw_pipeline(value):"),
+            (19, "def inner(multiplier):"),
+            (20, "def leaf(offset):"),
+            (21, "return seed * multiplier + offset"),
+        ],
+    )
