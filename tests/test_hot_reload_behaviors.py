@@ -231,6 +231,9 @@ def test_line_numbers_do_not_drift_after_distinct_edits():
     codefile = CodeFile(module_path, module_name=module_name)
     codefile.associate(module)
 
+    # NOTE: This intentionally uses same-file CodeFile.merge (not watch/refresh)
+    # so it exercises the exact merge/stash path that previously allowed line
+    # metadata to drift.
     def _apply_merge_change(updated_name):
         _write_file(module_path, _snippet_source(updated_name))
         updated = CodeFile(module_path, module_name=module_name)
@@ -346,6 +349,9 @@ def test_external_io_hot_reload_handles_ten_distinct_changes_without_drift():
     codefile = CodeFile(module_path, module_name=module_name)
     codefile.associate(module)
 
+    # NOTE: This 10-step chain writes the same module file via Python I/O and
+    # applies CodeFile.merge each time. Using merge directly here is critical:
+    # this test should fail if same-file stashed extents are not refreshed.
     def _merge_change(updated_name):
         _write_file(module_path, _snippet_source(updated_name))
         updated = CodeFile(module_path, module_name=module_name)
@@ -377,6 +383,8 @@ def test_external_io_hot_reload_handles_ten_distinct_changes_without_drift():
         expected_firstlineno=expected_first_lines[0],
     )
 
+    # Validate both runtime behavior and debugger-facing line metadata after
+    # every distinct file revision.
     for change_index in range(2, 11):
         raw_pipeline_defn = _merge_change(f"io_chain_{change_index:02d}")
         assert module.pipeline(3) == expected_outputs[change_index - 1]
