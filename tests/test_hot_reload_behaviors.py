@@ -358,11 +358,22 @@ def test_external_io_hot_reload_handles_ten_distinct_changes_without_drift():
             "s8:15",
             "final:26",
         ]
+        expected_first_lines = [12, 12, 12, 12, 15, 15, 15, 15, 15, 16]
         assert ctx.module.pipeline(3) == expected_outputs[0]
+        _assert_debugger_view_matches_runtime(
+            ctx.module.raw_pipeline,
+            expected_firstlineno=expected_first_lines[0],
+        )
 
         for change_index in range(2, 11):
             _apply_change(ctx, f"io_chain_{change_index:02d}")
             _await_pipeline(expected_outputs[change_index - 1])
+            _assert_debugger_view_matches_runtime(
+                ctx.module.raw_pipeline,
+                expected_firstlineno=expected_first_lines[
+                    change_index - 1
+                ],
+            )
 
         # Re-check at the end to ensure the module still reflects latest logic.
         assert ctx.module.pipeline(3) == "final:26"
