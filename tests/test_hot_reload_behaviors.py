@@ -144,6 +144,23 @@ def test_class_and_module_definitions_are_reflected_over_multiple_changes():
         ctx.watcher.join()
 
 
+def test_top_level_function_definitions_can_be_added_and_removed():
+    ctx = _start_hot_module("function_defs_main")
+    try:
+        assert ctx.module.keep() == "keep-v1"
+        assert ctx.module.temp() == "temp-v1"
+        assert not hasattr(ctx.module, "add_me")
+
+        _apply_change(ctx, "function_defs_updated")
+
+        assert ctx.module.keep() == "keep-v2"
+        assert not hasattr(ctx.module, "temp")
+        assert ctx.module.add_me() == "add-v2"
+    finally:
+        ctx.watcher.stop()
+        ctx.watcher.join()
+
+
 def test_new_calls_update_but_existing_inflight_calls_keep_old_code():
     ctx = _start_hot_module("inflight_main")
     try:
@@ -156,6 +173,48 @@ def test_new_calls_update_but_existing_inflight_calls_keep_old_code():
         updated = ctx.module.stream(3)
         assert next(updated) == 30
         assert next(updated) == 300
+    finally:
+        ctx.watcher.stop()
+        ctx.watcher.join()
+
+
+def test_nested_functions_can_be_added_and_removed():
+    ctx = _start_hot_module("nested_toggle_main")
+    try:
+        assert ctx.module.compose(4) == 5
+        _assert_line_markers_present(
+            ctx.module.compose,
+            [
+                (1, "def compose(value):"),
+                (2, "def inner():"),
+                (3, "return value + 1"),
+            ],
+        )
+
+        _apply_change(ctx, "nested_toggle_added")
+        assert ctx.module.compose(4) == 9
+        _assert_line_markers_present(
+            ctx.module.compose,
+            [
+                (1, "def compose(value):"),
+                (2, "def inner():"),
+                (3, "def extra():"),
+                (4, "return value * 2"),
+            ],
+        )
+        assert "def extra():" in inspect.getsource(ctx.module.compose)
+
+        _apply_change(ctx, "nested_toggle_removed")
+        assert ctx.module.compose(4) == 3
+        _assert_line_markers_present(
+            ctx.module.compose,
+            [
+                (1, "def compose(value):"),
+                (2, "def inner():"),
+                (3, "return value - 1"),
+            ],
+        )
+        assert "def extra():" not in inspect.getsource(ctx.module.compose)
     finally:
         ctx.watcher.stop()
         ctx.watcher.join()
