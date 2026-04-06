@@ -162,69 +162,88 @@ def test_new_calls_update_but_existing_inflight_calls_keep_old_code():
 
 
 def test_line_numbers_do_not_drift_after_distinct_edits():
-    ctx = _start_hot_module("line_numbers_main")
-    try:
-        assert ctx.module.keep_line_numbers_stable() == 11
-        _assert_debugger_view_matches_runtime(
-            ctx.module.keep_line_numbers_stable, 1
-        )
-        _assert_line_markers_present(
-            ctx.module.keep_line_numbers_stable,
-            [
-                (1, "def keep_line_numbers_stable():"),
-                (4, "def inner():"),
-                (5, "return base + 1"),
-            ],
+    tmod = TemporaryModule()
+    module_name = f"hot_reload_line_numbers_{next(_counter)}"
+    filename = f"{module_name}.py"
+    module_path = tmod.rel(filename)
+    _write_file(module_path, _snippet_source("line_numbers_main"))
+
+    module = __import__(module_name)
+    codefile = CodeFile(module_path, module_name=module_name)
+    codefile.associate(module)
+
+    def _apply_merge_change(updated_name):
+        _write_file(module_path, _snippet_source(updated_name))
+        updated = CodeFile(module_path, module_name=module_name)
+        codefile.merge(updated, order="new")
+        return next(
+            defn
+            for defn in codefile.root.walk()
+            if isinstance(defn, FunctionDefinition)
+            and defn.name == "keep_line_numbers_stable"
         )
 
-        # Change only nested function internals: first line should not drift.
-        _apply_change(ctx, "line_numbers_change_nested")
-        assert ctx.module.keep_line_numbers_stable() == 12
-        _assert_debugger_view_matches_runtime(
-            ctx.module.keep_line_numbers_stable, 1
-        )
-        _assert_line_markers_present(
-            ctx.module.keep_line_numbers_stable,
-            [
-                (1, "def keep_line_numbers_stable():"),
-                (4, "def inner():"),
-                (5, "return base + 2"),
-            ],
-        )
+    assert module.keep_line_numbers_stable() == 11
+    _assert_debugger_view_matches_runtime(
+        module.keep_line_numbers_stable, 1
+    )
+    _assert_line_markers_present(
+        module.keep_line_numbers_stable,
+        [
+            (1, "def keep_line_numbers_stable():"),
+            (4, "def inner():"),
+            (5, "return base + 1"),
+        ],
+    )
 
-        # Change lines above the function: first line should move to match file.
-        _apply_change(ctx, "line_numbers_change_preamble")
-        assert ctx.module.keep_line_numbers_stable() == 12
-        _assert_debugger_view_matches_runtime(
-            ctx.module.keep_line_numbers_stable, 5
-        )
-        _assert_line_markers_present(
-            ctx.module.keep_line_numbers_stable,
-            [
-                (5, "def keep_line_numbers_stable():"),
-                (8, "def inner():"),
-                (9, "return base + 2"),
-            ],
-        )
+    # Change only nested function internals: first line should not drift.
+    stable_fn = _apply_merge_change("line_numbers_change_nested")
+    assert module.keep_line_numbers_stable() == 12
+    _assert_debugger_view_matches_runtime(
+        module.keep_line_numbers_stable, 1
+    )
+    assert stable_fn.stashed.lineno == 1
+    _assert_line_markers_present(
+        module.keep_line_numbers_stable,
+        [
+            (1, "def keep_line_numbers_stable():"),
+            (4, "def inner():"),
+            (5, "return base + 2"),
+        ],
+    )
 
-        # Change nested internals again after a line shift.
-        _apply_change(ctx, "line_numbers_change_nested_again")
-        assert ctx.module.keep_line_numbers_stable() == 13
-        _assert_debugger_view_matches_runtime(
-            ctx.module.keep_line_numbers_stable, 5
-        )
-        _assert_line_markers_present(
-            ctx.module.keep_line_numbers_stable,
-            [
-                (5, "def keep_line_numbers_stable():"),
-                (8, "def inner():"),
-                (9, "value = base + 3"),
-                (10, "return value"),
-            ],
-        )
-    finally:
-        ctx.watcher.stop()
-        ctx.watcher.join()
+    # Change lines above the function: first line should move to match file.
+    stable_fn = _apply_merge_change("line_numbers_change_preamble")
+    assert module.keep_line_numbers_stable() == 12
+    _assert_debugger_view_matches_runtime(
+        module.keep_line_numbers_stable, 5
+    )
+    assert stable_fn.stashed.lineno == 5
+    _assert_line_markers_present(
+        module.keep_line_numbers_stable,
+        [
+            (5, "def keep_line_numbers_stable():"),
+            (8, "def inner():"),
+            (9, "return base + 2"),
+        ],
+    )
+
+    # Change nested internals again after a line shift.
+    stable_fn = _apply_merge_change("line_numbers_change_nested_again")
+    assert module.keep_line_numbers_stable() == 13
+    _assert_debugger_view_matches_runtime(
+        module.keep_line_numbers_stable, 5
+    )
+    assert stable_fn.stashed.lineno == 5
+    _assert_line_markers_present(
+        module.keep_line_numbers_stable,
+        [
+            (5, "def keep_line_numbers_stable():"),
+            (8, "def inner():"),
+            (9, "value = base + 3"),
+            (10, "return value"),
+        ],
+    )
 
 
 def test_complex_nested_and_decorated_updates_keep_debugger_line_alignment():
@@ -256,27 +275,3 @@ def test_complex_nested_and_decorated_updates_keep_debugger_line_alignment():
         ctx.watcher.stop()
         ctx.watcher.join()
 
-
-def test_same_file_merge_refreshes_stashed_line_numbers():
-    tmod = TemporaryModule()
-    module_name = f"hot_reload_merge_{next(_counter)}"
-    filename = f"{module_name}.py"
-    module_path = tmod.rel(filename)
-    _write_file(module_path, _snippet_source("line_numbers_main"))
-
-    module = __import__(module_name)
-    codefile = CodeFile(module_path, module_name=module_name)
-    codefile.associate(module)
-
-    _write_file(module_path, _snippet_source("line_numbers_change_preamble"))
-    updated = CodeFile(module_path, module_name=module_name)
-    codefile.merge(updated, order="new")
-
-    stable_fn = next(
-        defn
-        for defn in codefile.root.walk()
-        if isinstance(defn, FunctionDefinition)
-        and defn.name == "keep_line_numbers_stable"
-    )
-    assert module.keep_line_numbers_stable.__code__.co_firstlineno == 5
-    assert stable_fn.stashed.lineno == 5
