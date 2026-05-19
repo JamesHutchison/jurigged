@@ -731,7 +731,9 @@ class FunctionDefinition(GroupDefinition):
                 subcode := subcodes.get(closure.codepath(), None)
             ):
                 co = closure.get_object()
-                if co is not subcode:
+                if co is None:
+                    closure._codeobj = subcode
+                elif co is not subcode:
                     conform(co, subcode, use_cache=use_cache)
                     closure._codeobj = subcode
 

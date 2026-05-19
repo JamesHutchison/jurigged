@@ -2,6 +2,7 @@ import dis
 import inspect
 import linecache
 import os
+import sys
 import time
 from itertools import count
 from types import CodeType, SimpleNamespace
@@ -18,6 +19,7 @@ SNIPPET_DIR = os.path.join(
     os.path.dirname(__file__), "snippets", "hotreload"
 )
 pause = 0.2
+poll_interval = 0.05 if sys.platform == "darwin" else False
 
 
 def _snippet_source(name):
@@ -39,7 +41,12 @@ def _start_hot_module(main_name):
     _write_file(module_path, _snippet_source(main_name))
 
     registry = Registry()
-    watcher = watch(pattern=tmod.rel("*.py"), registry=registry, debounce=0)
+    watcher = watch(
+        pattern=tmod.rel("*.py"),
+        registry=registry,
+        debounce=0,
+        poll=poll_interval,
+    )
     module = __import__(module_name)
 
     return SimpleNamespace(
