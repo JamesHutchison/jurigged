@@ -184,6 +184,56 @@ def test_merge(ballon):
         ballon.module.uninteresting()
 
 
+def test_added_nested_function_can_be_updated_again(tmod):
+    module_name = "added_nested_function_can_be_updated_again"
+    original = """
+def compose(value):
+    def inner():
+        return value + 1
+
+    return inner()
+"""
+    with_extra = """
+def compose(value):
+    def inner():
+        def extra():
+            return value * 2
+
+        return extra() + 1
+
+    return inner()
+"""
+    updated_extra = """
+def compose(value):
+    def inner():
+        def extra():
+            return value * 3
+
+        return extra() + 1
+
+    return inner()
+"""
+    module_path = tmod.write(f"{module_name}.py", original)
+    module = __import__(module_name)
+    cf = CodeFile(module_path, module_name)
+    cf.associate(module)
+
+    cf.merge(CodeFile(module_path, module_name, source=with_extra), order="new")
+    assert module.compose(4) == 9
+
+    errors = []
+    cf.activity.register(
+        lambda event: errors.append(event)
+        if isinstance(event, Exception)
+        else None
+    )
+    cf.merge(
+        CodeFile(module_path, module_name, source=updated_extra), order="new"
+    )
+    assert module.compose(4) == 13
+    assert errors == []
+
+
 def test_merge_partial(ballon):
     radius = 10
     cir = ballon.module.FlatCircle(radius)
